@@ -1,5 +1,6 @@
 """
 ada boosting = 0.77511
+ada boosting with sub featuers = 0.78468
 """
 import pandas as pd
 import numpy as np
@@ -8,7 +9,6 @@ from sklearn.tree import DecisionTreeClassifier
 from sklearn.model_selection import train_test_split, KFold, cross_val_score
 from sklearn.grid_search import GridSearchCV   #Perforing grid search
 
-train = pd.read_csv("train.csv")
 train = pd.read_csv("train.csv")
 y = train['Survived']
 train = train.fillna({'Age': 30, 'Fare': 35})
