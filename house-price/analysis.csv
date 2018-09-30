@@ -1,0 +1,43 @@
+﻿**************************************** train,**************************************** test
+"RangeIndex: 1460 entries, 0 to 1459","RangeIndex: 1459 entries, 0 to 1458"
+Data columns (total 81 columns):,Data columns (total 80 columns):
+MSZoning         1460 non-null object,MSZoning         1455 non-null object
+LotFrontage      1201 non-null float64,LotFrontage      1232 non-null float64
+Alley            91 non-null object,Alley            107 non-null object
+Utilities        1460 non-null object,Utilities        1457 non-null object
+Exterior2nd      1460 non-null object,Exterior1st      1458 non-null object
+MasVnrType       1452 non-null object,Exterior2nd      1458 non-null object
+MasVnrArea       1452 non-null float64,MasVnrType       1443 non-null object
+ExterQual        1460 non-null object,MasVnrArea       1444 non-null float64
+BsmtQual         1423 non-null object,Foundation       1459 non-null object
+BsmtCond         1423 non-null object,BsmtQual         1415 non-null object
+BsmtExposure     1422 non-null object,BsmtCond         1414 non-null object
+BsmtFinType1     1423 non-null object,BsmtExposure     1415 non-null object
+BsmtFinSF1       1460 non-null int64,BsmtFinType1     1417 non-null object
+BsmtFinType2     1422 non-null object,BsmtFinSF1       1458 non-null float64
+BsmtFinSF2       1460 non-null int64,BsmtFinType2     1417 non-null object
+BsmtUnfSF        1460 non-null int64,BsmtFinSF2       1458 non-null float64
+TotalBsmtSF      1460 non-null int64,BsmtUnfSF        1458 non-null float64
+Heating          1460 non-null object,TotalBsmtSF      1458 non-null float64
+Electrical       1459 non-null object,CentralAir       1459 non-null object
+BsmtHalfBath     1460 non-null int64,BsmtFullBath     1457 non-null float64
+FullBath         1460 non-null int64,BsmtHalfBath     1457 non-null float64
+TotRmsAbvGrd     1460 non-null int64,KitchenQual      1458 non-null object
+Fireplaces       1460 non-null int64,Functional       1457 non-null object
+FireplaceQu      770 non-null object,Fireplaces       1459 non-null int64
+GarageType       1379 non-null object,FireplaceQu      729 non-null object
+GarageYrBlt      1379 non-null float64,GarageType       1383 non-null object
+GarageFinish     1379 non-null object,GarageYrBlt      1381 non-null float64
+GarageCars       1460 non-null int64,GarageFinish     1381 non-null object
+GarageArea       1460 non-null int64,GarageCars       1458 non-null float64
+GarageQual       1379 non-null object,GarageArea       1458 non-null float64
+GarageCond       1379 non-null object,GarageQual       1381 non-null object
+PavedDrive       1460 non-null object,GarageCond       1381 non-null object
+PoolQC           7 non-null object,PoolArea         1459 non-null int64
+Fence            281 non-null object,PoolQC           3 non-null object
+MiscFeature      54 non-null object,Fence            290 non-null object
+MiscVal          1460 non-null int64,MiscFeature      51 non-null object
+SaleCondition    1460 non-null object,SaleType         1458 non-null object
+"dtypes: float64(3), int64(35), object(43)","dtypes: float64(11), int64(26), object(43)"
+memory usage: 924.0+ KB,memory usage: 912.0+ KB
+None,None
