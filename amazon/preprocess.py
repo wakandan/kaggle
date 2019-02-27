@@ -28,7 +28,7 @@ id2fn = {i: fn for i, fn in enumerate(fns)}
 fn2id = {fn: i for i, fn in enumerate(fns)}
 print(f'first 10 file names = {fns[:10]}')
 df['tag_list'] = df['tags'].apply(lambda x: x.split())
-tags = list(set([i for sublist in list(df['tag_list']) for i in sublist]))
+tags = sorted(list(set([i for sublist in list(df['tag_list']) for i in sublist])))
 print(f'all tags = {tags}')
 labels = np.zeros((len(df), len(tags)))
 print(f'shape of labels = {labels.shape}')
@@ -80,24 +80,24 @@ trfs = transforms.Compose([
 ])
 
 with h5py.File(OUT, mode='w') as file:
-    file.create_dataset('train_img', train_shape, dtype=np.float)
-    file.create_dataset('val_img', val_shape, dtype=np.float)
-    file.create_dataset('train_lbl', train_lbl.shape, dtype=np.uint8)
-    file.create_dataset('val_lbl', val_lbl.shape, dtype=np.uint8)
-    file.create_dataset('test_img', test_shape, dtype=np.float)
+    file.create_dataset('train_img', train_shape, compression='gzip', dtype=np.float)
+    file.create_dataset('val_img', val_shape, compression='gzip', dtype=np.float)
+    file.create_dataset('train_lbl', train_lbl.shape, compression='gzip', dtype=np.uint8)
+    file.create_dataset('val_lbl', val_lbl.shape, compression='gzip', dtype=np.uint8)
+    file.create_dataset('test_img', test_shape, compression='gzip', dtype=np.float)
     file['train_lbl'][...] = train_lbl
     file['val_lbl'][...] = val_lbl
-    for i, fn in enumerate(train_fns[:10]):
+    for i, fn in enumerate(train_fns):
         im = Image.open(ROOT / 'train' / fn)
         im = trfs(im)
         im = im[:3, :, :]
         file['train_img'][i, ...] = im
-    for i, fn in enumerate(val_fns[:10]):
+    for i, fn in enumerate(val_fns):
         im = Image.open(ROOT / 'train' / fn)
         im = trfs(im)
         im = im[:3, :, :]
         file['val_img'][i, ...] = im
-    for i, fn in enumerate(test_fns[:10]):
+    for i, fn in enumerate(test_fns):
         im = Image.open(fn)
         im = trfs(im)
         im = im[:3, :, :]
