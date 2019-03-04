@@ -25,6 +25,7 @@ parser.add_argument('--train', action='store_true')
 parser.add_argument('--model')
 parser.add_argument('--image')
 parser.add_argument('--freeze', type=int, default=0)
+parser.add_argument('--column')
 
 args = parser.parse_args()
 
@@ -42,6 +43,10 @@ IMAGE = args.image
 FREEZE = args.freeze
 RESUME = args.resume
 MODEL = args.model
+COLUMN = args.column
+
+if COLUMN is not None:
+    logging.info(f'training for column = {COLUMN}')
 
 np.random.seed(RANDOM_SEED)
 random.seed(RANDOM_SEED)
@@ -52,6 +57,19 @@ df['tag_list'] = df['tags'].apply(lambda x: x.split())
 df['image_name'] = df['image_name'].apply(lambda x: x + '.jpg')
 fns = list(df['image_name'])
 tags = sorted(list(set([i for sublist in list(df['tag_list']) for i in sublist])))
+
+for tag in tags:
+    df[tag] = pd.Series(np.zeros(len(df)))
+
+
+def apply_tag(row):
+    for tag in row['tag_list']:
+        row[tag] = 1
+    return row
+
+
+df = df.apply(apply_tag, axis=1)
+
 labels = np.zeros((len(df), len(tags)))
 fn_ids = np.array(range(len(df)))
 id2fn = {i: fn for i, fn in enumerate(fns)}
@@ -96,10 +114,45 @@ for row in df.iterrows():
 
 
 class AmazonDataset(Dataset):
-
-    def __init__(self, df: pd.DataFrame) -> None:
+    def __init__(self, df: pd.DataFrame, labels, column=None) -> None:
         super().__init__()
         self.df = df
+        logging.info(f'original sample size = {len(self.df)}')
+        self.column = column
+        self.labels = labels
+        if column is not None:
+            self.df = self.df[['image_name', column]]
+            logging.info(f"selecting on just 1 column {self.column}")
+            logging.info(f'neg sample size = {len(self.df.loc[self.df[column] == 0])}')
+            logging.info(f'pos sample size = {len(self.df.loc[self.df[column] == 1])}')
+            ratio = len(self.df.loc[self.df[column] == 1]) / len(self.df.loc[self.df[column] == 0])
+            if ratio < 1:  # less positive samples than negative samples
+                less_samples = self.df.loc[self.df[column] == 1]
+                more_samples = self.df.loc[self.df[column] == 0]
+                logging.info(f'ratio pos/neg = {len(less_samples) / len(self.df)}')
+            else:  # more positive samples than negative samples
+                less_samples = self.df.loc[self.df[column] == 0]
+                more_samples = self.df.loc[self.df[column] == 1]
+                logging.info(f'ratio neg/pos = {len(less_samples) / len(self.df)}')
+            logging.info(f'size of less sample potion: {len(less_samples)}')
+            logging.info(f'size of more sample potion: {len(self.df) - len(less_samples)}')
+            dup = int(np.floor((len(self.df) - len(less_samples)) // len(less_samples)) + 1)
+            logging.info(f'duplication = {dup}')
+            # only get just enough samples so that the ratio between new pos/neg is 50:50
+            new_samples = pd.DataFrame(pd.np.tile(less_samples, (dup, 1)), columns=['image_name', column])[
+                          :len(more_samples) - len(less_samples)]
+            self.df = pd.concat([self.df, new_samples], axis=0)
+            logging.info(f'new neg sample size = {len(self.df.loc[self.df[column] == 0])}')
+            logging.info(f'new pos sample size = {len(self.df.loc[self.df[column] == 1])}')
+            # logging.info(f'new neg sample size = {len(self.df.loc[self.df[column] == 0])}')
+            # logging.info(f'new pos sample size = {len(self.df.loc[self.df[column] == 1])}')
+            logging.info(f'target total sample size = {len(self.df)}')
+            self.df = self.df.sample(frac=1).reset_index(drop=True)
+            self.labels = self.df[column]
+            # logging.info("train data frame")
+            # print(self.df.head())
+            # logging.info('label data frame')
+            # print(self.labels.head())
 
     def __getitem__(self, index):
         row = self.df.iloc[index]
@@ -107,7 +160,7 @@ class AmazonDataset(Dataset):
         im = Image.open(ROOT / f'train-jpg/{im_fn}')
         im = trfs(im)
         im = im[:3, :, :]
-        lbl = torch.from_numpy(labels[index])
+        lbl = torch.from_numpy(np.array(self.labels[index]))
         # lbl = np.zeros(len(tags) * 2)
         # for i, j in enumerate(labels[index]):
         #     if j == 0:
@@ -141,13 +194,21 @@ class AmazonTestDataset(Dataset):
 
 class Net(nn.Module):
 
-    def __init__(self):
+    def __init__(self, column=None):
         super().__init__()
-        self.net = models.resnet50(pretrained=True)
-        self.net.fc = nn.Sequential(
-            # nn.Linear(512, 256, bias=True),
-            nn.Linear(2048, len(tags), bias=True),
-        )
+        self.net = models.resnet18(pretrained=True)
+        self.column = column
+        if self.column is None:
+            self.net.fc = nn.Sequential(
+                # nn.Linear(512, 256, bias=True),
+                nn.Linear(512, len(tags), bias=True),
+                # nn.Linear(512, 256, bias=True),
+                # nn.Linear(256, 1, bias=True),
+            )
+        else:
+            self.net.fc = nn.Sequential(
+                nn.Linear(512, 1, bias=True)
+            )
 
     def forward(self, x):
         prediction = self.net(x)
@@ -157,7 +218,7 @@ class Net(nn.Module):
         return prediction
 
 
-net = Net()
+net = Net(column=COLUMN)
 net = net.cuda()
 
 crit = nn.BCEWithLogitsLoss().cuda()
@@ -183,10 +244,11 @@ if RESUME:
 def compute_fn(pair):
     x, y = pair
     x, y = x.cuda(), y.cuda().float()
+    y = y.unsqueeze(1)
     prediction = net(x)
     loss = crit(prediction, y)
     # loss = Variable(loss, requires_grad=True)
-    return loss
+    return prediction, loss
 
 
 def compute_accuracy():
@@ -198,17 +260,43 @@ def compute_accuracy():
         total += x.shape[0]
         prediction = net(x).cpu().numpy()
         prediction = (prediction > 0.5).astype(np.int)
+        target = np.expand_dims(y.detach().cpu().numpy().astype(np.int), axis=1)
         for i in range(y.shape[0]):
-            if np.array_equal(prediction[i], y[i]):
+            if np.array_equal(prediction[i], target[i]):
                 count += 1
     logging.info(f'\taccuracy = {count / total}')
 
 
+def compute_accuracy_pair(prediction, label):
+    count = 0
+    prediction = prediction.detach().cpu().numpy()
+    prediction = (prediction > 0.5).astype(np.int)
+    target = np.expand_dims(label.detach().cpu().numpy().astype(np.int), axis=1)
+    for i in range(label.shape[0]):
+        if np.array_equal(prediction[i], np.array(target[i])):
+            count += 1
+    acc = count / prediction.shape[0]
+    # logging.info(f'iter accuracy = {acc}')
+
+
+# def compute_f2_pair(prediction, label):
+#     prediction = prediction.detach().cpu().numpy()
+#     prediction = (prediction > 0.5).astype(np.int)
+#     target = label.detach().cpu().numpy().astype(np.int)
+#     for i in range(label.shape[0]):
+#         tp = np.sum(prediction[i] * target[i])
+#         precision = tp / np.sum(target[i])
+#         recall = tp /
+
+
 if TRAIN:
     net = net.cuda()
-    train_loader, val_loader = train_test_split(AmazonDataset(df), batch_size=BS, random_seed=RANDOM_SEED)
+    train_loader, val_loader = train_test_split(AmazonDataset(df, labels, column=COLUMN), batch_size=BS,
+                                                random_seed=RANDOM_SEED)
     train(net, train_loader, val_loader, optimizer, EPOCHS, compute_fn,
-          EarlyStopping('./models/amazon_best', patience=15), epoch_end_callback=compute_accuracy)
+          EarlyStopping(f'./models/amazon_best_{COLUMN}', patience=3),
+          epoch_end_callback=compute_accuracy,
+          iter_end_callback=compute_accuracy_pair)
 else:
     # img = Image.open(IMAGE)
     # img = trfs(img)
