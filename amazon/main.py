@@ -51,7 +51,7 @@ if COLUMN is not None:
 np.random.seed(RANDOM_SEED)
 random.seed(RANDOM_SEED)
 
-print(f'CSV location: {CSV}')
+logging.info(f'CSV location: {CSV}')
 df = pd.read_csv(CSV)
 df['tag_list'] = df['tags'].apply(lambda x: x.split())
 df['image_name'] = df['image_name'].apply(lambda x: x + '.jpg')
@@ -222,20 +222,26 @@ net = Net(column=COLUMN)
 net = net.cuda()
 
 crit = nn.BCEWithLogitsLoss().cuda()
-if FREEZE == 0:
-    lrs = []
-    for i, param in enumerate(net.net.children()):
-        lrs.append({'params': param.parameters()})
-    lrs[-1] = {'params': param.parameters(), 'lr': LR * 10}
-    optimizer = optim.Adamax(lrs, lr=LR, weight_decay=0.9)
-else:
-    for i, param in enumerate(net.net.children()):
-        param.requires_grad = False
-        if i > FREEZE:
-            break
-    net.net.fc.requires_grad = True
-    optimizer = optim.Adam(net.parameters(), lr=LR, weight_decay=0.9)
 
+
+def get_optimizer(net, lr=LR, freeze=FREEZE):
+    if freeze == 0:
+        lrs = []
+        for i, param in enumerate(net.net.children()):
+            lrs.append({'params': param.parameters()})
+        lrs[-1] = {'params': param.parameters(), 'lr': LR * 10}
+        optimizer = optim.Adamax(lrs, lr=lr, weight_decay=0.9)
+    else:
+        for i, param in enumerate(net.net.children()):
+            param.requires_grad = False
+            if i > FREEZE:
+                break
+        net.net.fc.requires_grad = True
+        optimizer = optim.Adam(net.parameters(), lr=lr, weight_decay=0.9)
+    return optimizer
+
+
+net_before_parallel = net
 net = nn.DataParallel(net)
 if RESUME:
     net.load_state_dict(torch.load(RESUME))
@@ -293,10 +299,16 @@ if TRAIN:
     net = net.cuda()
     train_loader, val_loader = train_test_split(AmazonDataset(df, labels, column=COLUMN), batch_size=BS,
                                                 random_seed=RANDOM_SEED)
-    train(net, train_loader, val_loader, optimizer, EPOCHS, compute_fn,
-          EarlyStopping(f'./models/amazon_best_{COLUMN}', patience=3),
-          epoch_end_callback=compute_accuracy,
-          iter_end_callback=compute_accuracy_pair)
+    best_model = None
+    for lr in (1e-4, 1e-5, 1e-6):
+        logging.info(f'training with learning rate {lr}')
+        optimizer = get_optimizer(net_before_parallel, lr=lr)
+        if best_model is not None:
+            logging.info(f"resume from {best_model}")
+            net.load_state_dict(torch.load(best_model))
+        best_model = train(net, train_loader, val_loader, optimizer, EPOCHS, compute_fn,
+                           EarlyStopping(f'./models/amazon_best_{COLUMN}', patience=3),
+                           epoch_end_callback=compute_accuracy)
 else:
     # img = Image.open(IMAGE)
     # img = trfs(img)
@@ -305,19 +317,47 @@ else:
     # with torch.no_grad():
     #     prediction = net(img)
     #     print(prediction)
-    test_dataset = AmazonTestDataset()
-    net.load_state_dict(torch.load(MODEL))
-    test_loader = DataLoader(test_dataset, batch_size=32)
-    results = []
-    with torch.no_grad():
-        for im_fns, x in test_loader:
-            x = x.cuda()
-            prediction = net(x).cpu().numpy()
-            prediction = (prediction > 0.5).astype(np.int)
-            for i in range(prediction.shape[0]):
-                results.append({'image_name': os.path.splitext(os.path.basename(im_fns[i]))[0],
-                                'tags': ' '.join(decode_tags(prediction[i]))})
-    result_df = pd.DataFrame(results, columns=['image_name', 'tags'])
-    print(result_df.head())
-    result_df.to_csv(f'submission.csv', index=False)
+    model_mapping = {'agriculture': './models/amazon_best_agriculture_0.19409638224692827',
+                     'artisinal_mine': './models/amazon_best_artisinal_mine_0.014648641422686596',
+                     'bare_ground': './models/amazon_best_bare_ground_0.02775007519390314',
+                     'blooming': './models/amazon_best_blooming_0.017692260599384706',
+                     'blow_down': './models/amazon_best_blow_down_0.012828032874802905',
+                     'clear': './models/amazon_best_clear_0.11885210984710896',
+                     'cloudy': './models/amazon_best_cloudy_0.03458153792501738',
+                     'conventional_mine': './models/amazon_best_conventional_mine_0.01632822955423218',
+                     'cultivation': './models/amazon_best_cultivation_0.09353890326038926',
+                     'habitation': './models/amazon_best_habitation_0.06882091915106466',
+                     'haze': './models/amazon_best_haze_0.05561411199199051',
+                     'partly_cloudy': './models/amazon_best_partly_cloudy_0.054492494252582006',
+                     'primary': './models/amazon_best_primary_0.0649511478999156',
+                     'road': './models/amazon_best_road_0.10346179906571028',
+                     'selective_logging': './models/amazon_best_selective_logging_0.017975151464934388',
+                     'slash_burn': './models/amazon_best_slash_burn_0.016148214383671682',
+                     'water': './models/amazon_best_water_0.14608877789802277'}
+    # net.load_state_dict(torch.load(model_mapping['habitation']))
+    result_frames = []
+    for column, model in model_mapping.items():
+        result_column = []
+        net = Net(column=column)
+        net = nn.DataParallel(net)
+        print(f'working on column [{column}], loading model [{model}]')
+        test_dataset = AmazonTestDataset()
+        net.load_state_dict(torch.load(model))
+        net = net.cuda()
+        test_loader = DataLoader(test_dataset, batch_size=BS)
+        results = []
+        batch_count = 0
+        with torch.no_grad():
+            for im_fns, x in test_loader:
+                batch_count += 1
+                print(f'column {column}, batch count = {batch_count}')
+                x = x.cuda()
+                prediction = net(x).cpu().numpy()
+                prediction = (prediction > 0.5).astype(np.int)
+                for i in range(prediction.shape[0]):
+                    result_column.append({'image_name': os.path.splitext(os.path.basename(im_fns[i]))[0],
+                                          column: prediction[i][0]})
+        result_df = pd.DataFrame(result_column, columns=['image_name', column])
+        result_df.to_csv(f'submission_{column}.csv', index=False)
+        print(f'done with column {column}')
     print('done')
