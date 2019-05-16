@@ -1,23 +1,20 @@
 import glob
 import sys
 
-from torch.autograd import Variable
+# torch.backends.cudnn.benchmark = True
 
 sys.path.append('..')
 
-from torch import nn, optim
-from torch.utils.data import DataLoader, Dataset
-from vanhelsing.logger import *
+from torch import optim
 import pandas as pd
 from pathlib import Path
-import h5py
 from torchvision import models, transforms
-import numpy as np
 import random
 from PIL import Image
 from vanhelsing.utils_train import *
 from vanhelsing.configurator import *
-from torch import functional as F
+from vanhelsing.cosine_scheduler import CosineLRWithRestarts
+from sklearn.metrics import fbeta_score
 
 parser = TrainArgumentParser()
 
@@ -69,7 +66,9 @@ LR = args.lr
 
 trfs = transforms.Compose([
     transforms.Resize((IMG_SIZE, IMG_SIZE)),
-    transforms.ToTensor()
+    transforms.RandomRotation(90),
+    transforms.ToTensor(),
+    # transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
 ])
 
 
@@ -143,10 +142,16 @@ class Net(nn.Module):
 
     def __init__(self):
         super().__init__()
-        self.net = models.resnet50(pretrained=True)
+        self.net = models.resnet34(pretrained=True)
         self.net.fc = nn.Sequential(
             # nn.Linear(512, 256, bias=True),
-            nn.Linear(2048, len(tags), bias=True),
+            # nn.Linear(2048, 1024),
+            # nn.ReLU(),
+            # nn.Dropout(0.5),
+            # nn.Linear(1024, 512),
+            # nn.ReLU(),
+            # nn.Dropout(0.5),
+            nn.Linear(512, len(tags)),
         )
 
     def forward(self, x):
@@ -157,25 +162,25 @@ class Net(nn.Module):
         return prediction
 
 
-net = Net()
-net = net.cuda()
+net = Net().cuda()
 
-crit = nn.BCEWithLogitsLoss().cuda()
-if FREEZE == 0:
-    lrs = []
-    for i, param in enumerate(net.net.children()):
-        lrs.append({'params': param.parameters()})
-    lrs[-1] = {'params': param.parameters(), 'lr': LR * 10}
-    optimizer = optim.Adamax(lrs, lr=LR, weight_decay=0.9)
-else:
-    for i, param in enumerate(net.net.children()):
-        param.requires_grad = False
-        if i > FREEZE:
-            break
-    net.net.fc.requires_grad = True
-    optimizer = optim.Adam(net.parameters(), lr=LR, weight_decay=0.9)
+crit = nn.BCEWithLogitsLoss()
+# if FREEZE == 0:
+#     lrs = []
+#     for i, param in enumerate(net.net.children()):
+#         lrs.append({'params': param.parameters()})
+#     lrs[-1] = {'params': param.parameters(), 'lr': LR * 10}
+#     optimizer = optim.Adamax(lrs, lr=LR, weight_decay=0.9)
+# else:
+#     for i, param in enumerate(net.net.children()):
+#         param.requires_grad = False
+#         if i > FREEZE:
+#             break
+#     net.net.fc.requires_grad = True
+#     optimizer = optim.Adam(net.parameters(), lr=LR, weight_decay=0.9)
+optimizer = optim.Adam(net.parameters(), lr=LR, weight_decay=0.9)
 
-net = nn.DataParallel(net)
+# net = nn.DataParallel(net)
 if RESUME:
     net.load_state_dict(torch.load(RESUME))
 
@@ -184,9 +189,10 @@ def compute_fn(pair):
     x, y = pair
     x, y = x.cuda(), y.cuda().float()
     prediction = net(x)
+    # loss = crit(y, prediction)
     loss = crit(prediction, y)
     # loss = Variable(loss, requires_grad=True)
-    return loss
+    return prediction, loss
 
 
 def compute_accuracy():
@@ -204,11 +210,32 @@ def compute_accuracy():
     logging.info(f'\taccuracy = {count / total}')
 
 
+def compute_f2():
+    logging.info('computing f2 score')
+    f2s = []
+    for x, y in val_loader:
+        x = x.cuda()
+        prediction = net(x).cpu().numpy()
+        prediction = (prediction > 0.5).astype(np.int)
+        for i in range(y.shape[0]):
+            f2 = fbeta_score(y[i], prediction[i], beta=2, average='micro')
+            f2s.append(f2)
+    logging.info(f'f2 score = {np.mean(np.asarray(f2s))}')
+
+
 if TRAIN:
-    net = net.cuda()
+    # net = net.cuda()
     train_loader, val_loader = train_test_split(AmazonDataset(df), batch_size=BS, random_seed=RANDOM_SEED)
-    train(net, train_loader, val_loader, optimizer, EPOCHS, compute_fn,
-          EarlyStopping('./models/amazon_best', patience=15), epoch_end_callback=compute_accuracy)
+    # calculate the epoch size:
+    epoch_size = 0
+    print(len(train_loader)*BS)
+    train_loader, val_loader = train_test_split(AmazonDataset(df), batch_size=BS, random_seed=RANDOM_SEED)
+    scheduler = CosineLRWithRestarts(optimizer, BS, 32384, restart_period=5, t_mult=1.2)
+    train(net, train_loader, val_loader, optimizer, EPOCHS, compute_fn=compute_fn,
+          early_stopping=EarlyStopping('./models/amazon_best', patience=10),
+          epoch_end_callback=compute_f2,
+          debug_step=args.debug_iter,
+          scheduler=scheduler)
 else:
     # img = Image.open(IMAGE)
     # img = trfs(img)
