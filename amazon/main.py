@@ -13,6 +13,7 @@ import random
 from PIL import Image
 from vanhelsing.utils_train import *
 from vanhelsing.configurator import *
+from vanhelsing.cosine_scheduler import CosineLRWithRestarts
 from sklearn.metrics import fbeta_score
 
 parser = TrainArgumentParser()
@@ -65,7 +66,7 @@ LR = args.lr
 
 trfs = transforms.Compose([
     transforms.Resize((IMG_SIZE, IMG_SIZE)),
-    # transforms.RandomRotation(90),
+    transforms.RandomRotation(90),
     transforms.ToTensor(),
     # transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
 ])
@@ -225,10 +226,16 @@ def compute_f2():
 if TRAIN:
     # net = net.cuda()
     train_loader, val_loader = train_test_split(AmazonDataset(df), batch_size=BS, random_seed=RANDOM_SEED)
+    # calculate the epoch size:
+    epoch_size = 0
+    print(len(train_loader)*BS)
+    train_loader, val_loader = train_test_split(AmazonDataset(df), batch_size=BS, random_seed=RANDOM_SEED)
+    scheduler = CosineLRWithRestarts(optimizer, BS, 32384, restart_period=5, t_mult=1.2)
     train(net, train_loader, val_loader, optimizer, EPOCHS, compute_fn=compute_fn,
-          early_stopping=EarlyStopping('./models/amazon_best', patience=5),
+          early_stopping=EarlyStopping('./models/amazon_best', patience=10),
           epoch_end_callback=compute_f2,
-          debug_step=args.debug_iter)
+          debug_step=args.debug_iter,
+          scheduler=scheduler)
 else:
     # img = Image.open(IMAGE)
     # img = trfs(img)
